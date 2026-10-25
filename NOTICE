@@ -1,0 +1,45 @@
+qwen3-tts-cantonese-recipe
+The training recipe for a Hong Kong Cantonese fine-tune of Qwen3-TTS 12Hz 1.7B: data selection, cleanup,
+hyperparameters, release metrics and listening-page generation. Code and configuration only.
+
+Copyright 2026 the repository contributors.
+
+Licensed under the Apache License, Version 2.0. See LICENSE.
+
+The trainer files under trainer/ carry their own SPDX headers. sft_12hz_lora_mlflow.py and dataset.py derive from
+the Qwen team's Qwen3-TTS fine-tuning example (Apache-2.0, "Copyright 2026 The Alibaba Qwen team"), with this
+project's LoRA, voice-baking and checkpointing changes.
+
+WHAT IS NOT IN THIS REPOSITORY, by construction
+
+  - No audio, audio codes, transcripts, clip ids, file names or manifests. The user downloads Common Voice
+    themselves; Mozilla Data Collective's terms forbid re-hosting and identifying contributors.
+  - No model weights. The released weights ship with the release, not here.
+  - Nothing from research-only corpora (MCE, yue_emo) or anything derived from them.
+
+THIRD-PARTY COMPONENTS (fetched or built by the user unless marked vendored)
+
+  Qwen3-TTS 12Hz 1.7B Base                 Apache-2.0
+    Qwen/Qwen3-TTS-12Hz-1.7B-Base, fetched by the user. The trained weights are a derivative of it.
+
+  Sidon v0.1 speech restoration            MIT (as its model cards state; confirm before publishing)
+    sarulab-speech/sidon-v0.1 (Hugging Face), fetched by the user; arXiv 2509.17052.
+    The inference wrapper in src/steps.py follows the authors' demo (sarulab-speech/sidon_demo_beta).
+
+  qwen3-tts.cpp (the GGUF runtime)         MIT
+    https://github.com/Danmoreng/qwen3-tts.cpp, built by scripts/build_gguf_runtime.sh from the pinned upstream
+    commit 16bb5afcd06311031c72a8488f8d59660dc2fb46 plus external/qwen3-tts-cpp/patches/ (this project's
+    resident --serve mode). Not vendored: the build clones upstream.
+
+  Mozilla Common Voice (yue)               CC0-1.0, under Mozilla Data Collective's terms of access
+    Downloaded by the user. Never re-hosted here.
+
+  Vendored in external/js/, embedded in the listening pages, byte for byte from the npm tarballs named in
+  external/js/PINNED.json:
+    pitchy 4.1.0                           MIT
+    fft.js 4.0.4                           MIT (grant in its package.json)
+    meyda 5.6.3                            MIT
+
+  Evaluation models, fetched by the user and used only to measure: Qwen/Qwen3-ASR-1.7B and
+  Qwen/Qwen3-ForcedAligner-0.6B (Apache-2.0), iic/SenseVoiceSmall (FunASR), speechbrain/spkrec-ecapa-voxceleb.
+  Check each model card's licence before redistributing anything they produce.

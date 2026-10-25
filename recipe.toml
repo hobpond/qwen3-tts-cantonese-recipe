@@ -1,0 +1,211 @@
+# The recipe, in one file: every hyperparameter, threshold and path that recipe.py uses.
+#
+# This is H1 (the lab's EXP-100), chosen by the owner for v0.0.5 on 2026-10-22 ("I think 100 is worth a release",
+# both voices): the D1 recipe -- Sidon restoration, the raw clip's dynamics put back, both ends trimmed to the speech,
+# the speaker clips padded back with digital silence, v0.0.1's training recipe -- with Common Voice zh-HK 27.0 added
+# to the language phase. A change to any value in [data], [cleanup], [sets], [train] or [bake] is a different
+# recipe, not a tuning of this one.
+#
+# Paths: absolute, ~, or ${VAR} (expanded from the environment; unset is empty, and a stage that needs it refuses).
+# Nothing here may point inside this repository: the recipe writes audio, codes and weights, and none of that may
+# enter it (scripts/check_clean_room.py).
+
+[paths]
+work = "${RECIPE_WORK}"                    # everything the recipe writes; a native disk (on WSL: under ~, never /mnt)
+store = "${RECIPE_WORK}/canto-store"       # the stepwise store (CANTO_STORE)
+python = "${RECIPE_PYTHON}"                # interpreter for every stage; empty = the one running recipe.py
+base_model = "${TTS_BASE_MODEL}"           # local Qwen/Qwen3-TTS-12Hz-1.7B-Base
+sidon_models = "${SIDON_MODELS}"           # sarulab-speech/sidon-v0.1 files + w2v-bert-2.0-fe/ (README)
+cv_root = "${CV_ROOT}"                     # Common Voice yue, Hugging Face mirror layout (transcript/yue, audio/yue)
+mdc_archive = "${CV_MDC_ARCHIVE}"          # or: a Mozilla Data Collective .tar.gz (used when cv_root is empty)
+zhhk_mdc_archive = "${CV_ZHHK_MDC_ARCHIVE}" # Common Voice zh-HK 27.0 from MDC (dataset cmu5wp2bp00dgnq07ylmgbnrz,
+                                           # common-voice-scripted-speech-27-0-chines-26ba81db.tar.gz)
+speaker_cv_root = "${SPEAKER_CV_ROOT}"     # the release holding the donor's clips; empty = cv_root
+speaker_mdc_archive = "${SPEAKER_MDC_ARCHIVE}"
+donor_ids = "${DONOR_IDS}"                 # a file OUTSIDE this repository: the donor's Common Voice pseudonym(s)
+# A set given ALREADY SELECTED (the selector's output layout: audio/ + transcripts.tsv) skips its selector and runs
+# only ingest. The v0.0.5 build starts the yue and donor sets this way (README: the 22.0 pool is no longer held and
+# the donor's 343 came from an unrecorded earlier release); zh-HK is selected from its MDC archive.
+lang_selected_dir = "${LANG_SELECTED_DIR}"
+speaker_selected_dir = "${SPEAKER_SELECTED_DIR}"
+voice_source = "${VOICE_SOURCE}"           # a merged checkpoint carrying the chosen voice rows (bake)
+baseline_gguf = "${BASELINE_GGUF}"         # v0.0.1 as a GGUF directory (the baseline every test compares against)
+eval_lines = "${EVAL_LINES}"               # held-out short lines, JSONL {"digest", "text"} (render, card, gate)
+eval_prose = "${EVAL_PROSE}"               # long prose: <id>.txt (title, blank line, paragraphs) + about.json (pages)
+
+# ---------------------------------------------------------------------------------------------------- 1. data
+[data.language]
+# v0.0.1's language set: Common Voice yue 22.0, every speaker. Measured in the lab (2026-10-18): NOT gender-filtered,
+# whatever its register once said; the selector's floor was 3 s and the ingest's floor 4 s, which together gave
+# 33,104 clips. A fresh download reproduces this only if Common Voice still serves the same 22.0 release.
+# THE INGEST TRIMMED EDGE SILENCE (measured 2026-10-22, for this repository): 40 of 40 sampled rows of v0.0.1's set
+# match the decoded clip after ingest_recordings' --trim-silence (threshold 0.15, margin 0.20 s) to 0.02 s, and 7 of
+# 40 match it untrimmed. The lab's dataset register says "WITHOUT --trim-silence"; the files say otherwise.
+collection = "lang"
+cv_release = "22.0"
+locale = "yue"
+splits = ["validated"]
+min_duration = 3.0                         # selector, on Common Voice's own clip_durations.tsv
+max_duration = 30.0
+gender = ""                                # "" = no gender filter
+require_colloquial = true                  # transcripts with colloquial Cantonese markers only
+drop_down_voted = true
+seed = 4242
+ingest_min_duration = 4.0                  # on the decoded, edge-trimmed 24 kHz audio (ingest_recordings.py)
+ingest_max_duration = 30.0
+ingest_trim_silence = true                 # ingest_recordings --trim-silence at its defaults (0.15, 0.20 s)
+speaker_id = "cv_yue_v22"                  # one constant for every language row, as v0.0.1
+selected_dir = "lang_selected_dir"         # [paths] entry that, when set, replaces the selector for this set
+expect_clips = 33104                       # v0.0.1's count; a different count is reported, not refused
+expect_rows = 33097                        # after the Sidon exclusion (7 in the lab)
+
+[data.zhhk]
+# Common Voice zh-HK 27.0, the Hong Kong half of H1's language phase (EXP-100). Only on Mozilla Data Collective, as
+# one archive; you download it under MDC's terms (no re-hosting, no identifying contributors). The lab's selection:
+# validated, 3-30 s, colloquial transcripts, no down-votes, no gender or accent filter, seed 4242 -> 29,562 clips,
+# 42 h, 1,946 contributors -> 29,511 rows (exp100 counted 46 excluded by env_corr; 51 fewer than selected in all).
+collection = "zhhk"
+archive = "zhhk_mdc_archive"               # always read from this [paths] entry (select_mdc.py)
+locale = "zh-HK"
+splits = ["validated"]
+min_duration = 3.0
+max_duration = 30.0
+gender = ""
+require_colloquial = true
+drop_down_voted = true
+seed = 4242
+ingest_min_duration = 3.0                  # the lab ingested zh-HK at 24 kHz FLAC, 3-30 s
+ingest_max_duration = 30.0
+ingest_trim_silence = false                # measured: 30 of 30 sampled lab clips equal the untrimmed decode
+speaker_id = "cv_zhhk_27"
+expect_clips = 29562
+expect_rows = 29511
+
+[data.speaker]
+# The voice donor's clips: one Common Voice contributor, selected by the pseudonym in [paths].donor_ids.
+# v0.0.1's 343 clips came from an EARLIER yue release whose number the lab did not record; from 22.0 the same
+# contributor has 777 (338 of the 343 inside). The selection filters below were not recorded either: they are the
+# selector's speaker-phase settings (register filter off, no gender filter). OPEN: confirm against the 343 set.
+collection = "spk"
+splits = ["validated"]
+min_duration = 3.0
+max_duration = 30.0
+gender = ""
+require_colloquial = false
+drop_down_voted = true
+seed = 4242
+# The donor's 343 = the lab's 348 selected clips through ingest --trim-silence at a 4.0 s floor (measured
+# 2026-10-22: 343 rows, the same transcripts as a multiset and the same sorted durations to 0.01 s as v0.0.1's
+# speaker set; at 3.0 s, or untrimmed, all 348 pass).
+ingest_min_duration = 4.0
+ingest_max_duration = 30.0
+ingest_trim_silence = true
+speaker_id = "cv_voice6"
+selected_dir = "speaker_selected_dir"
+expect_clips = 343
+expect_rows = 343
+
+# ---------------------------------------------------------------------------------------------------- 2. cleanup
+[cleanup]
+# Every step is a store layer (src/store.py): a re-run reuses finished layers, a changed parameter makes a sibling.
+sidon = { model = "sarulab-speech/sidon-v0.1", device = "cuda:0" }        # models path comes from [paths]
+dynamics = { frame_s = 0.01, smooth_s = 0.05, speech_floor_db = 30.0, max_gain_db = 8.0 }
+trim = { lead_s = 0.10, tail_s = 0.30 }    # cut to edges v2's speech core: 0.10 s before, 0.30 s after
+pad_sets = ["speaker"]                     # digital silence back to the source length: SPEAKER clips only.
+                                           # Padding the language set too brought runaways back (EXP-099 D2);
+                                           # zh-HK is a language set, so it is trimmed and not padded.
+encode = { tokenizer = "Qwen/Qwen3-TTS-Tokenizer-12Hz", device = "cuda:0" }
+env_corr_min = 0.5                         # exclude a clip whose Sidon output's 10 ms envelope correlates < 0.5
+                                           # with the raw clip (a restoration that wandered; 7 of 33,104 in the lab)
+jobs = 4                                   # CPU steps' worker processes
+
+# ---------------------------------------------------------------------------------------------------- 3. sets
+[sets.parts]                               # one trainer jsonl per data set, the Sidon exclusions applied on each
+language = { file = "part-yue.jsonl", from_step = "trim" }
+zhhk = { file = "part-zhhk.jsonl", from_step = "trim" }
+speaker = { file = "part-spk.jsonl", from_step = "pad" }
+
+[sets.train]                               # the training sets: their parts concatenated in this order
+language = { file = "lang-yue-zhhk.jsonl", parts = ["language", "zhhk"] }     # yue rows first, as exp100.stage_sets
+speaker = { file = "spk-pad.jsonl", parts = ["speaker"] }                      # D1's speaker set, unchanged
+
+# ---------------------------------------------------------------------------------------------------- 4. training
+[train]
+# exp083.RECIPE, v0.0.1's recipe: LoRA r32/a64, lr 1e-4, warmup 0.03, batch 1 x grad-accum 4, one epoch, no
+# sub-talker loss, sdpa, a checkpoint every 500 steps (a run without per-step checkpoints loses everything to a
+# crash; the trainer's own default is 0, so it is passed here, always).
+batch_size = 1
+gradient_accumulation_steps = 4
+lr = "1e-4"
+num_epochs = 1
+warmup_ratio = 0.03
+lora_rank = 32
+lora_alpha = 64
+checkpoint_every_epochs = 0
+checkpoint_every_steps = 500
+sub_talker_weight = 0
+attn_implementation = "sdpa"
+# THE SEED (owner, 2026-10-23: "If we ship, it means we don't have a reproducible recipe"). Two unseeded trainings of
+# this recipe on near-identical data lost 158 and 148 last characters against the lab's 132; evaluation noise is about
+# 4.5. With a seed the trainer fixes the order and the LoRA init and uses deterministic GPU kernels: two seeded 30-step
+# runs gave bit-identical adapters (unseeded runs differ by 0.046), about 7% slower. Changing it is a new draw, not
+# a new recipe: compare recipes over several seeds.
+seed = 1
+fast_kernels = false                     # true: seeded but fast GPU kernels (about 0.0005 apart after 30 steps instead of 0.0); for exploration only, a release trains exact
+language_extra = ["--keep_speaker_encoder"]          # from the public base; the speaker phase needs the encoder
+speaker_name = "hk_voice_343"                        # one voice per speaker phase, baked at row 3000
+min_free_mib = 10000                                 # refuse to start on a card with less free memory
+
+# ---------------------------------------------------------------------------------------------------- 5. voices
+[bake]
+# The chosen vectors replace the trained row (owner: "choose, never assume"). Rows are copied from
+# [paths].voice_source: today v0.0.1's single-clip 343 vector at 3000 and the 777 averaged vector at 3001.
+voices = { hk_voice_343 = 3000, hk_voice_777 = 3001 }   # 777 is still baked but no longer evaluated or shipped;
+                                                      # it leaves the bake once EXP-109 (which builds from here) ends
+
+# ---------------------------------------------------------------------------------------------------- 6. conversion
+[convert]
+key = "recipe-h1"                          # the GGUF cache key (qwen-talker-<key>-q8_0.gguf)
+quant = "q8_0"
+
+# ---------------------------------------------------------------------------------------------------- 7. evaluation
+[eval]
+voices = ["hk_voice_343"]                  # v0.0.5 ships 343 only (owner, 2026-10-24: "drop 777"); every build since
+                                           # EXP-101 vetoed it on runaways and long pauses with a 2.4 dB flatter range
+baseline_name = "V1"
+baseline_speaker = "hk_cantonese_speaker"  # v0.0.1's baked voice
+draws = 2                                  # 200 lines x 2 draws = 400 clips per voice (the lab's EXP-059 H)
+expect_lines = 200
+chunk_hi = 45                              # long-prose chunk ceiling: 70 skipped whole clauses, 45 and 26 did not
+seed_salt = ""                             # the default seeds every earlier read used
+templates = "spk"                          # tone templates (tonefit) and speaker similarity: the donor's raw clips
+
+[gate]
+# The release gate, Part A (the lab's release-gate concept, codified 2026-10-19). A2 is not implemented here.
+primary_alpha = 0.05
+primary_tests = 2                          # Bonferroni: 1 voice x 2 ends
+veto_alpha = 0.05
+cer_median_margin = 0.03
+tone = { resamples = 2000, seed = 20261018, ci = 0.95 }
+runaway_factor = 2.0
+runaway_slack = 5
+loud_veto_db = -0.5
+loud_alpha = 0.0125
+skip_alpha = 0.05
+pause_s = 1.0                              # A9: an internal pause this long is a stall (2026-10-24)
+pause_alpha = 0.05
+# THE OWNER SET A7 ASIDE FOR THIS RELEASE (2026-10-22): H1's loudness range read -0.83 dB against v0.0.1, which A7
+# vetoes. The owner reads it as "likely confounded by the uniform need of no room acoustic artifact". The lab tested
+# that the same day and found the opposite direction: a planted room NARROWS this measure (-5.0 dB median on 120 of
+# H1's lines), so room acoustics in v0.0.1's renders would lower its range, not raise it. The waiver is the owner's
+# judgement, not a measured confound. A7 is still measured and a firing is reported as waived_vetoes; the model card
+# must state the measured flatness. Remove the entry to restore the veto.
+waived = ["A7_liveliness"]
+
+# ---------------------------------------------------------------------------------------------------- 8. pages
+[pages]
+bm = "BM-RECIPE-C1"                        # the registered listen this page belongs to (register it before listening)
+stories = []                               # text ids from eval_prose, in page order; empty = every .txt, sorted
+max_chars = 0                              # 0 = cut at paragraph ends only
+blind = true
+two_recognisers = true                     # final pages: redraw chunks both recognisers hear losing text

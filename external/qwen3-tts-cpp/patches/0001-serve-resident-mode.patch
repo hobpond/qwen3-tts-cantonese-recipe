@@ -1,0 +1,193 @@
+From a363199c20205ac72f28b7e7c94b2b373a9fabd7 Mon Sep 17 00:00:00 2001
+Date: Sat, 5 Sep 2026 17:31:21 -0700
+Subject: [PATCH] Add --serve: resident mode, one request per line on stdin
+
+Synthesis is not what this binary spends its time on. Measured on one short
+Cantonese line with a q8_0 talker: 1205 ms inside, 6.13 s of wall. The remainder
+is process start, 2.3 GB of model file and CUDA init, so a caller rendering a
+ten-clip passage one process at a time spends longer loading than speaking.
+
+--bench-server already loads once and synthesises repeatedly; it just re-uses a
+single string. This reuses that shape with the text taken from stdin instead:
+
+  stdin   <out_path> TAB <seed> TAB <text>
+  stdout  OK TAB <out_path> TAB <ms>     or  ERR TAB <message>
+
+run_synthesis_once captures text and params by reference, so serving is a matter
+of assigning them per request. Text is the last field so a tab inside it cannot
+desynchronise the framing, and stdout carries nothing but replies -- every
+human-readable line already goes to stderr.
+
+The seed travels PER REQUEST rather than being fixed at startup. One seed for a
+whole session would make each utterance depend on how many preceded it: the same
+text would render differently as the second request than as the first, and a
+single clip could not be re-rendered on its own. With a per-request seed, resident
+output matches one-shot output clip for clip -- verified downstream by re-rendering
+a ten-chunk passage and getting all ten chunks byte-identical to the one-shot run.
+
+-t is not required with --serve, and --serve refuses to combine with --repeat or
+--bench-server rather than silently picking one.
+
+Measured on that passage: 50 s one-process-per-clip, 28 s resident.
+---
+ src/main.cpp | 88 ++++++++++++++++++++++++++++++++++++++++++++++++++--
+ 1 file changed, 85 insertions(+), 3 deletions(-)
+
+diff --git a/src/main.cpp b/src/main.cpp
+index d773ad8..c7981a5 100644
+--- a/src/main.cpp
++++ b/src/main.cpp
+@@ -8,6 +8,7 @@
+ #include <cstring>
+ #include <fstream>
+ #include <limits>
++#include <iostream>
+ #include <sstream>
+ #include <string>
+ #include <vector>
+@@ -423,6 +424,8 @@ void print_usage(const char * program) {
+     fprintf(stderr, "  --repeat <n>           Run synthesis n times in one process (default: 1)\n");
+     fprintf(stderr, "  --bench-server <n>     Resident benchmark loop after loading models/voice artifacts\n");
+     fprintf(stderr, "  --bench-warmup <n>     Warmup requests for --bench-server (default: 0)\n");
++    fprintf(stderr, "  --serve                Resident mode: one request per line on stdin as\n");
++    fprintf(stderr, "                         <out>TAB<seed>TAB<text>, replying OK/ERR per line\n");
+     fprintf(stderr, "  --stream               Use streaming synthesis API and collect chunks for WAV output\n");
+     fprintf(stderr, "  --stream-chunk-sec <s> Streaming codec chunk duration (default: 1.0)\n");
+     fprintf(stderr, "  --stream-left-context-sec <s> Streaming decoder left context (default: 2.0)\n");
+@@ -474,6 +477,7 @@ int main(int argc, char ** argv) {
+     int repeat_count = 1;
+     int bench_server_count = 0;
+     int bench_warmup_count = 0;
++    bool serve_stdin = false;
+     bool use_streaming = false;
+     bool threads_set = false;
+     
+@@ -638,6 +642,8 @@ int main(int argc, char ** argv) {
+                 return 1;
+             }
+             bench_server_count = std::stoi(args[i]);
++        } else if (arg == "--serve") {
++            serve_stdin = true;
+         } else if (arg == "--bench-warmup") {
+             if (++i >= (int) args.size()) {
+                 fprintf(stderr, "Error: missing bench-warmup value\n");
+@@ -725,7 +731,9 @@ int main(int argc, char ** argv) {
+         return 1;
+     }
+     
+-    if (text.empty() && extract_speaker_embedding_file.empty() && extract_icl_prompt_file.empty()) {
++    // --serve takes its text from stdin, one request per line, so -t is not
++    // required (and is ignored) in resident mode.
++    if (!serve_stdin && text.empty() && extract_speaker_embedding_file.empty() && extract_icl_prompt_file.empty()) {
+         fprintf(stderr, "Error: text is required\n");
+         print_usage(args[0].c_str());
+         return 1;
+@@ -738,6 +746,10 @@ int main(int argc, char ** argv) {
+         fprintf(stderr, "Error: --bench-server and --bench-warmup must be >= 0\n");
+         return 1;
+     }
++    if (serve_stdin && (bench_server_count > 0 || repeat_count != 1)) {
++        fprintf(stderr, "Error: --serve cannot be combined with --repeat or --bench-server\n");
++        return 1;
++    }
+     if (bench_server_count > 0 && repeat_count != 1) {
+         fprintf(stderr, "Error: --bench-server and --repeat cannot be combined\n");
+         return 1;
+@@ -828,7 +840,7 @@ int main(int argc, char ** argv) {
+         stream_params.generation = params;
+         stream_params.collect_audio = true;
+     }
+-    if (bench_server_count > 0) {
++    if (bench_server_count > 0 || serve_stdin) {
+         params.print_progress = false;
+         params.print_timing = false;
+         stream_params.generation.print_progress = false;
+@@ -894,7 +906,7 @@ int main(int argc, char ** argv) {
+     }
+     
+     // Set progress callback
+-    if (bench_server_count == 0) {
++    if (bench_server_count == 0 && !serve_stdin) {
+         tts.set_progress_callback([](int tokens, int max_tokens) {
+             fprintf(stderr, "\rGenerating: %d/%d tokens", tokens, max_tokens);
+         });
+@@ -1048,6 +1060,76 @@ int main(int argc, char ** argv) {
+         return result;
+     };
+ 
++    // RESIDENT MODE. The expensive part of this binary is not synthesis, it is
++    // getting to the point where synthesis can start: ~5 s of process start, 2.3 GB
++    // of model file and CUDA context init, against ~1.2 s to actually speak a short
++    // line. One process per utterance pays that every time, so a ten-clip passage
++    // spends more wall-clock loading than generating.
++    //
++    // The protocol is deliberately the dumbest thing that works, because the client
++    // is a Python subprocess pipe and anything richer is a second thing to debug:
++    //
++    //   stdin   <out_path> TAB <seed> TAB <text>      one request per line
++    //   stdout  OK TAB <out_path> TAB <ms>            or  ERR TAB <message>
++    //
++    // Text comes last so that a tab inside it cannot desynchronise the framing, and
++    // stdout carries NOTHING else -- every human-readable message goes to stderr.
++    // The seed travels per request rather than being fixed at startup: one seed for
++    // a whole resident session would make each utterance depend on how many came
++    // before it, so the same text would render differently as the second request
++    // than as the first, and a re-render of one clip could not be reproduced.
++    if (serve_stdin) {
++        fprintf(stderr, "Resident: ready\n");
++        fflush(stderr);
++        std::string line;
++        int request_index = 0;
++        while (std::getline(std::cin, line)) {
++            if (!line.empty() && line.back() == '\r') {
++                line.pop_back();
++            }
++            if (line.empty()) {
++                continue;
++            }
++            const size_t t1 = line.find('\t');
++            const size_t t2 = (t1 == std::string::npos)
++                            ? std::string::npos : line.find('\t', t1 + 1);
++            if (t1 == std::string::npos || t2 == std::string::npos) {
++                printf("ERR\tmalformed request, expected <out>TAB<seed>TAB<text>\n");
++                fflush(stdout);
++                continue;
++            }
++            const std::string request_out = line.substr(0, t1);
++            const std::string seed_str = line.substr(t1 + 1, t2 - t1 - 1);
++            // `text` and `params` are captured by reference by run_synthesis_once,
++            // so assigning them here is what makes the next call render this line.
++            text = line.substr(t2 + 1);
++            if (!seed_str.empty()) {
++                params.seed = std::stoll(seed_str);
++            }
++
++            const int64_t t0 = monotonic_time_ms();
++            qwen3_tts::tts_result result = run_synthesis_once(request_index, true, nullptr);
++            const int64_t wall_ms = monotonic_time_ms() - t0;
++            if (!result.success) {
++                printf("ERR\t%s\n", result.error_msg.c_str());
++                fflush(stdout);
++                ++request_index;
++                continue;
++            }
++            if (!qwen3_tts::save_audio_file(request_out, result.audio, result.sample_rate)) {
++                printf("ERR\tfailed to save %s\n", request_out.c_str());
++                fflush(stdout);
++                ++request_index;
++                continue;
++            }
++            printf("OK\t%s\t%lld\n", request_out.c_str(), (long long) wall_ms);
++            fflush(stdout);
++            ++request_index;
++        }
++        fprintf(stderr, "Resident: stdin closed after %d request(s)\n", request_index);
++        return 0;
++    }
++
+     if (bench_server_count > 0) {
+         const int total_requests = bench_warmup_count + bench_server_count;
+         for (int request = 0; request < total_requests; ++request) {
+-- 
+2.34.1
+

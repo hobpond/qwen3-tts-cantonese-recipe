@@ -1,0 +1,71 @@
+# The recipe repository holds code and configuration only. Everything below is blocked BY EXTENSION, not by path:
+# the lab learned that a path rule (audio/*) is written after the files are already tracked, and ignoring never
+# untracks what is committed. An extension rule holds wherever a file lands. The content gate is
+# scripts/check_clean_room.py (run it with --staged before every commit); this file is the first, cheaper line.
+
+# --- audio and video, in any container -------------------------------------------------------------------------
+*.wav
+*.flac
+*.mp3
+*.ogg
+*.opus
+*.m4a
+*.aac
+*.aiff
+*.aif
+*.au
+*.amr
+*.wv
+*.wma
+*.caf
+*.webm
+*.mp4
+
+# --- data: transcripts, manifests, codes, store layers, tables --------------------------------------------------
+*.jsonl
+*.json
+*.tsv
+*.csv
+*.parquet
+*.npz
+*.npy
+*.txt
+*.pkl
+*.db
+*.sqlite
+*.mlflow.db
+
+# --- model weights and converted runtimes ------------------------------------------------------------------------
+*.safetensors
+*.pt
+*.pth
+*.bin
+*.ckpt
+*.onnx
+*.gguf
+
+# --- listening pages (FLAC inlined as base64) ---------------------------------------------------------------------
+*.html
+*.htm
+
+# --- archives (a corpus download is one) --------------------------------------------------------------------------
+*.zip
+*.tar
+*.tar.gz
+*.tgz
+*.7z
+*.rar
+*.xz
+*.bz2
+
+# --- logs and Python build output ---------------------------------------------------------------------------------
+*.log
+__pycache__/
+*.py[codz]
+*.egg-info/
+.venv/
+
+# --- the few text and JSON files that ARE source --------------------------------------------------------------------
+!requirements.txt
+!external/js/PINNED.json
+!external/js/fft.js-4.0.4/package.json

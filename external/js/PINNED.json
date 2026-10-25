@@ -1,0 +1,53 @@
+{
+ "why": "Libraries embedded in the listening pages' panel v3 (TASK-PARTICLE-DPO-001, W37, owner 2026-10-10). Each file is byte for byte from the npm tarball named, whose integrity matched npm's when fetched. build_pool_page.py refuses to build if any file's sha256 differs. MIT only: pitchfinder (GPL-3.0) and Essentia.js (AGPL-3.0) were excluded on license. fft.js ships no LICENSE file; its package.json carries the MIT grant and author.",
+ "packages": {
+  "pitchy": {
+   "version": "4.1.0",
+   "license": "MIT",
+   "tarball": "https://registry.npmjs.org/pitchy/-/pitchy-4.1.0.tgz",
+   "integrity": "sha512-E8nQ8svBroGSMcc3qu2KvLHIuRYAIfrSkqDKWhjgj3WizseqWQXjQ+Q5t4g1CU73R5Euk+DAinyNFDK+KZw7zA==",
+   "files": {
+    "index.js": {
+     "from_tarball": "package/index.js",
+     "sha256": "79b92333cde9ec16798757f73b624abd13522da31e8fab2993c19d319b3bb36e"
+    },
+    "LICENSE": {
+     "from_tarball": "package/LICENSE",
+     "sha256": "3dd8c40c5b5a0ee4c79be3ecd0499e8fefebf002ebcff4170c419168278f97cd"
+    }
+   }
+  },
+  "fft.js": {
+   "version": "4.0.4",
+   "license": "MIT",
+   "tarball": "https://registry.npmjs.org/fft.js/-/fft.js-4.0.4.tgz",
+   "integrity": "sha512-f9c00hphOgeQTlDyavwTtu6RiK8AIFjD6+jvXkNkpeQ7rirK3uFWVpalkoS4LAwbdX7mfZ8aoBfFVQX1Re/8aw==",
+   "files": {
+    "fft.js": {
+     "from_tarball": "package/lib/fft.js",
+     "sha256": "4092b92cec888377666265b724d676628d377d4d5f56b03b76d9c2c27fd061ea"
+    },
+    "package.json": {
+     "from_tarball": "package/package.json",
+     "sha256": "cabc4d418347946dcbdd8a4f24aa04447240c64949cfff5a71047a0fde4d2510"
+    }
+   }
+  },
+  "meyda": {
+   "version": "5.6.3",
+   "license": "MIT",
+   "tarball": "https://registry.npmjs.org/meyda/-/meyda-5.6.3.tgz",
+   "integrity": "sha512-fAdwfzIi1WDoL0idUQvCD7dZ7EN74FYH83G+jZQO3Nr9yOEBtzFvcMg2KLdLlu6psSP8XFlO0kYynG5o/E681Q==",
+   "files": {
+    "meyda.min.js": {
+     "from_tarball": "package/dist/web/meyda.min.js",
+     "sha256": "cc5f9581fe1feb9d52d20a2cac14fc264bd22100bbffe3a83e0fd72cd0a8cf2b"
+    },
+    "LICENSE.md": {
+     "from_tarball": "package/LICENSE.md",
+     "sha256": "15be9b78aa3f0b48a2ef63359b0cacfd73e61ac9244818db8086d858fc7f8121"
+    }
+   }
+  }
+ }
+}
