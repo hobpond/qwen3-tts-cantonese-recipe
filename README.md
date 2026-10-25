@@ -1,19 +1,70 @@
 # qwen3-tts-cantonese-recipe
 
-The training recipe for a Hong Kong Cantonese fine-tune of
-[Qwen3-TTS 12Hz 1.7B Base](https://huggingface.co/Qwen/Qwen3-TTS-12Hz-1.7B-Base): data selection, cleanup,
-hyperparameters, the release measures and the listening pages, as one pipeline you run from a clean checkout.
-Code and configuration only: no audio, transcripts, clip ids, manifests or weights. You download Common Voice
-yourself.
+The recipe that builds **[hk-cantonese-cc0](https://huggingface.co/jmtl/hk-cantonese-cc0-qwen3-tts)**, a Hong Kong
+Cantonese voice for [Qwen3-TTS 12Hz 1.7B Base](https://huggingface.co/Qwen/Qwen3-TTS-12Hz-1.7B-Base), from the data
+up: selection, cleanup, both LoRA training phases, the voice bake, GGUF conversion, the release gate and the listening
+pages, as one pipeline run stage by stage from a clean checkout. Code and configuration only: no audio, transcripts,
+clip ids, manifests or weights. You download Common Voice yourself.
 
-It is the lite repository of a larger research lab, which keeps the evidence for every choice below. This one
-states what to do.
+| Release | Weights | This repository |
+|---|---|---|
+| **v0.0.5** (2026-10-25) | [adapter](https://huggingface.co/jmtl/hk-cantonese-cc0-qwen3-tts) · [GGUF](https://huggingface.co/jmtl/hk-cantonese-cc0-qwen3-tts-GGUF) (tag `v0.0.5` on both) | tag `v0.0.5`, `recipe.toml` with `seed = 2` |
 
-## The recipe (H1: D1 + zh-HK, the lab's EXP-100; chosen by the owner for v0.0.5 on 2026-10-22)
+## Use the model without building it
 
-The owner locked D1 as the training recipe on 2026-10-22 and, the same day, chose EXP-100's H1 for v0.0.5 ("I think
-100 is worth a release"), shipping **both voices**: D1 with Common Voice zh-HK 27.0 added to the language phase. On
-the owner's listen (BM-100-p2, scene 6) H1 rated 3.67 against v0.0.1's 3.00, preferred 3 to 0.
+You do not need this repository to use the voice. Take the
+[GGUF](https://huggingface.co/jmtl/hk-cantonese-cc0-qwen3-tts-GGUF) for [qwen3-tts.cpp](https://github.com/Danmoreng/qwen3-tts.cpp)
+or [Qwen-TTS Studio](https://github.com/hobpond/qwen-tts-studio), or the
+[adapter](https://huggingface.co/jmtl/hk-cantonese-cc0-qwen3-tts) for Python; both cards say how. The speaker is
+`hk_voice_343`.
+
+## Rebuild v0.0.5
+
+What reproduces exactly, and what does not:
+
+- **Training is exact.** Seeded training (`seed`, with `fast_kernels = false`) gives bit-identical weights on the same
+  inputs and hardware class. The lab's from-scratch run of this repository at `seed = 2` reproduced the released
+  talker GGUF, md5 `672040405ec852babf6accc15d82f81a`.
+- **The inputs are the open question.** Bit-exact needs the same clips. Common Voice zh-HK 27.0 is selected here from
+  the Mozilla Data Collective archive exactly as the release did. The `yue` 22.0 language set and the donor's 343
+  clips came from the lab's own selections, which cannot be re-hosted under the Data Collective's terms: a fresh
+  selection from Common Voice gives a close build, not the same one (see *Where the v0.0.5 build's data starts*).
+  `records/select.json` records the sha256 of every set's transcripts, so you can tell which you have.
+- **The seed matters.** On long prose, training seeds 1-4 dropped 66, 25, 45 and 51 characters on the same reads
+  (v0.0.1: 16); v0.0.5 is seed 2. Another seed is another model.
+
+Steps, on Linux or WSL with a CUDA card of 12 GB or more (about 8 hours end to end on an RTX 3080 Ti):
+
+1. **Install and build the runtime:** `pip install -r requirements.txt`, then `bash scripts/build_gguf_runtime.sh`.
+2. **Fetch the models** (*Fetch the models once*, below): the base, the codec, Sidon, Qwen3-ASR, SenseVoice.
+3. **Get the data:** Common Voice `yue` and `zh-HK` 27.0 from the [Mozilla Data Collective](https://datacollective.mozillafoundation.org),
+   under its terms (no re-hosting, no speaker identification). Point `CV_ROOT` or `CV_MDC_ARCHIVE`, and
+   `CV_ZHHK_MDC_ARCHIVE`, at them; `DONOR_IDS` names the donor's Common Voice pseudonym (a private file, never in a
+   repository).
+4. **The voice rows (`VOICE_SOURCE`):** build the released model from its adapter and point `VOICE_SOURCE` at it. Its
+   rows 3000 and 3001 are bit-identical to the ones the release baked (checked 2026-10-25):
+
+   ```bash
+   hf download jmtl/hk-cantonese-cc0-qwen3-tts --revision v0.0.5 --local-dir ~/models/hk-cantonese-v005-adapter
+   python ~/models/hk-cantonese-v005-adapter/scripts/apply_adapter.py --base "$TTS_BASE_MODEL" \
+       --adapter ~/models/hk-cantonese-v005-adapter --out ~/models/hk-cantonese-v005
+   export VOICE_SOURCE=~/models/hk-cantonese-v005
+   ```
+
+5. **The baseline (`BASELINE_GGUF`):** the measures compare every build with v0.0.1:
+   `hf download jmtl/hk-cantonese-cc0-qwen3-tts-GGUF --revision v0.0.1 --local-dir ~/.qwen-tts-gguf/v0.0.1`.
+6. **Evaluation material (`EVAL_LINES`, `EVAL_PROSE`):** your own held-out lines and prose, never training text. The
+   gate is relative (the candidate against v0.0.1 on the same material), so any fair set works.
+7. **Run the stages** in order (*Commands, in order*, below) and read each stage's `records/<stage>.json` before the
+   next. Training is the `train-lang` stage, about 7 hours; the rest is minutes to an hour each.
+8. **Check:** after `convert`, compare the talker md5 with `672040405ec852babf6accc15d82f81a`. Equal means you have
+   v0.0.5; different means different inputs or seed, and the gate (`gate`, `card`) tells you how it compares with
+   v0.0.1.
+
+## The recipe in detail
+
+Lab references below (EXP-..., BM-...) name the experiments in the research lab that chose each value; they are
+kept for traceability and are not needed to run anything.
 
 | Step | What | Values (all in `recipe.toml`) |
 |---|---|---|
@@ -21,9 +72,9 @@ the owner's listen (BM-100-p2, scene 6) H1 rated 3.67 against v0.0.1's 3.00, pre
 | 2. Cleanup | Sidon v0.1 restoration, then `dynamics` (the raw clip's loudness contour put back), edges v2 and `trim` (0.10 s before the speech, 0.30 s after); `pad` back to the source length with digital silence on the **speaker clips only**; then `audio` and `encode` (the 12 Hz codec). Each step is an immutable, re-runnable store layer | exclude a clip whose Sidon envelope correlation is under 0.5 |
 | 3. Sets | the language set is the trimmed yue rows followed by the trimmed zh-HK rows, concatenated; the speaker set is the padded donor clips (D1's, unchanged) | 33,097 + 29,511 = 62,608 and 343 rows in the lab; `speaker_id` cv_yue_v22 / cv_zhhk_27 / cv_voice6 |
 | 4. Training | language phase from the public base with `--keep_speaker_encoder`, then a speaker phase on the donor's clips, one voice `hk_voice_343` | LoRA r32/a64, lr 1e-4, warmup 0.03, batch 1 x grad-accum 4, 1 epoch, `sub_talker_weight` 0, sdpa, a checkpoint every 500 steps |
-| 5. Voices | the chosen vectors copied into `codec_embedding` from a source checkpoint; **both ship** | `hk_voice_343` row 3000, `hk_voice_777` row 3001 |
+| 5. Voices | the chosen vectors copied into `codec_embedding` from a source checkpoint (`VOICE_SOURCE`, below) | `hk_voice_343` row 3000 (the released voice); row 3001 is also baked |
 | 6. Conversion | GGUF q8_0 for [Qwen-TTS Studio](https://github.com/hobpond/qwen-tts-studio), through the pinned qwen3-tts.cpp runtime | `tts_model_size` must be `1b7` |
-| 7. Measures | first-draw renders of held-out short lines and long prose at chunk ceiling 45, for each voice and for v0.0.1; the release gate's Part A and the checkpoint card, each voice on its own | thresholds in `[gate]`; A7 waived by the owner (below) |
+| 7. Measures | first-draw renders of held-out short lines and long prose at chunk ceiling 45, for the voice and for v0.0.1; the release gate's Part A and the checkpoint card, each voice on its own | thresholds in `[gate]`; A7 waived by the owner (below) |
 | 8. Listening | long prose by paragraph, blind, 1-5 ratings, per-character marks and notes, skipped text redrawn for the final page | `[pages]` |
 
 Why each piece is there, in one line each: Sidon cleans the crowd-recorded audio but compresses its dynamics, so
@@ -182,7 +233,8 @@ commands that passes the gate and the owner's listen.
 
 ## Open items
 
-- **Gate A2 and Part B** are tables above, not code: the lab's implementations are its experiment chain.
+- **Gate A2 and Part B** are tables above, not code here. v0.0.5's Part B (long prose: defects, chunk CER, skipped
+  text) was run with the lab's implementation and passed; porting it into this repository is open.
 - **A4 on the folded CER**: the recogniser writes Sidon audio in simplified characters, which the CER counts as
   error. Folded to one script, D1's CER equals v0.0.1's. The gate reports the folded CER beside A4; whether A4
   vetoes on it is the owner's decision.
@@ -191,8 +243,6 @@ commands that passes the gate and the owner's listen.
   and an `expect_clips` of 343; from 22.0 the same donor has 777 clips.
 - **The card's instrument controls** (liveliness and tone plants, the script-switch plant, held-out donor clips) need
   plant collections the lab builds with its own experiment code; `--self-test` here checks the card's arithmetic.
-- **hk_voice_777** has not been through the gate, the card or a listen in the lab (its row is the averaged vector the
-  lab found 3 dB flat); this recipe renders, gates and cards it beside `hk_voice_343`.
 - **The evaluation material** (the held-out lines, the long prose and its `about.json`) is not in this text-free
   repository; candidate and baseline must be rendered from the same files.
 
